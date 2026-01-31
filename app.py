@@ -13,9 +13,57 @@ from sklearn.model_selection import LeaveOneOut, cross_val_score
 from sklearn.metrics import classification_report, confusion_matrix
 import re
 import warnings
+import subprocess
+import sys
 warnings.filterwarnings('ignore')
 
-# Import Sastrawi
+# ==================== CEK DAN INSTAL DEPENDENCIES ====================
+def install_packages():
+    """Install required packages"""
+    required_packages = [
+        'openpyxl',  # Untuk membaca file Excel
+        'Sastrawi',   # Untuk preprocessing Bahasa Indonesia
+    ]
+    
+    installed_packages = []
+    missing_packages = []
+    
+    for package in required_packages:
+        try:
+            __import__(package.replace('-', '_'))
+            installed_packages.append(package)
+        except ImportError:
+            missing_packages.append(package)
+    
+    return installed_packages, missing_packages
+
+# Tampilkan status packages di sidebar
+st.sidebar.title("📦 Status Dependencies")
+
+installed, missing = install_packages()
+
+if installed:
+    st.sidebar.success("✅ Packages terinstal:")
+    for pkg in installed:
+        st.sidebar.text(f"  - {pkg}")
+
+if missing:
+    st.sidebar.warning("⚠️ Packages yang diperlukan:")
+    for pkg in missing:
+        st.sidebar.text(f"  - {pkg}")
+    
+    if st.sidebar.button("🔧 Install Packages"):
+        with st.sidebar:
+            with st.spinner(f"Menginstal {len(missing)} packages..."):
+                for package in missing:
+                    try:
+                        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+                        st.success(f"✅ {package} berhasil diinstal")
+                    except:
+                        st.error(f"❌ Gagal menginstal {package}")
+                st.rerun()
+
+# ==================== IMPORT SASTRAWI SETELAH INSTALASI ====================
 try:
     from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
     from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
@@ -29,8 +77,9 @@ try:
     
     SASTRAWI_AVAILABLE = True
 except ImportError:
-    st.warning("Sastrawi tidak terinstal. Menggunakan preprocessing dasar.")
     SASTRAWI_AVAILABLE = False
+    if 'Sastrawi' not in missing:
+        st.sidebar.warning("Sastrawi tidak tersedia. Menggunakan preprocessing dasar.")
 
 # ==================== KONFIGURASI APLIKASI ====================
 st.set_page_config(
@@ -87,17 +136,30 @@ def main():
                                        disabled=not SASTRAWI_AVAILABLE,
                                        help="Gunakan stemming dan stopword removal Bahasa Indonesia")
     
+    # Opsi upload file
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📂 Upload Data")
+    
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload file Excel dengan data kasus", 
+        type=['xlsx', 'xls'],
+        help="File harus memiliki kolom 'URAIAN SINGKAT (MO)' dan 'PERKARA'"
+    )
+    
     st.sidebar.markdown("---")
     menu = st.sidebar.selectbox(
         "📋 Menu Navigasi",
-        ["📊 Dashboard", "🔮 Prediksi Kasus", "📚 Data & Preprocessing", "📈 Analisis Model"]
+        ["📊 Dashboard", "🔮 Prediksi Kasus", "📚 Data & Preprocessing", "📈 Analisis Model", "📘 Panduan"]
     )
     
     # Load data
-    df = load_data()
+    if uploaded_file is not None:
+        df = load_data_from_upload(uploaded_file)
+    else:
+        df = load_sample_data()
     
     if df is None:
-        st.error("Tidak dapat memuat data. Pastikan file 'Data.xlsx' tersedia.")
+        st.error("Tidak dapat memuat data.")
         return
     
     # Training model (cached dengan parameter preprocessing)
@@ -111,22 +173,34 @@ def main():
         show_preprocessing(df, use_sastrawi)
     elif menu == "📈 Analisis Model":
         show_model_analysis(df, model_data)
+    elif menu == "📘 Panduan":
+        show_guide()
 
 # ==================== FUNGSI BANTU ====================
-@st.cache_data
-def load_data():
-    """Memuat data dari file Excel"""
+def load_data_from_upload(uploaded_file):
+    """Memuat data dari file yang diupload"""
     try:
-        df = pd.read_excel('Data.xlsx')
+        df = pd.read_excel(uploaded_file)
+        st.sidebar.success(f"✅ Data berhasil dimuat: {len(df)} baris")
+        
+        # Cek kolom yang diperlukan
+        required_columns = ['URAIAN SINGKAT (MO)', 'PERKARA']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+            st.error(f"Kolom yang diperlukan tidak ditemukan: {missing_columns}")
+            st.info("Pastikan file memiliki kolom: 'URAIAN SINGKAT (MO)' dan 'PERKARA'")
+            return None
+        
         return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        # Jika file tidak ditemukan, buat dari data yang disediakan
-        st.info("Membuat dataframe dari data contoh...")
-        return create_sample_dataframe()
+        return None
 
-def create_sample_dataframe():
-    """Membuat dataframe contoh jika file tidak ditemukan"""
+def load_sample_data():
+    """Membuat dataframe contoh"""
+    st.info("Menggunakan data contoh. Upload file Excel Anda sendiri untuk menggunakan data aktual.")
+    
     data = [
         [1, "LP/B/01/I/2024/Kalbar/Res Mpw/Sek Sui Pinyuh tgl. 03-Jan-2024", "Penganiayaan", "Sungai Pinyuh", "Tya Amelliani", "Heriyadi", "Pelaku melakukan Penganiayaan dengan memukul dan menendang pelapor", "–", "Sidik", "P.21B-631/O.1.5/Eoh.1/02/2024,tgl.28-02-2024. Tahap II B/41/II/Res.1.6/2024,Tgl. 29-02-2024."],
         [2, "LP/B/02/I/2024/Kalbar/Res Mpw/Sek Sui Pinyuh tgl. 14-Jan-2024", "Pencurian", "Sungai Pinyuh", "Ayu Mufidatun Hasanah", "M. Taufik, dkk", "Pelaku masuk kedalam rumah dengan mencongkel pintu masuk mengambil laptop", "1(satu) buah laptop merk ASUS", "Sidik", "P.21B-594/O.1.5/Eoh.1/02/2024,tgl.22-02-2024. Tahap II B/51/III/Res.1.8/2024,Tgl. 14-03-2024."],
@@ -753,6 +827,114 @@ def show_model_analysis(df, model_data):
         st.write(f"- Alpha (smoothing): {model_data['model'].alpha}")
         st.write(f"- Number of Classes: {model_data['model'].n_classes_}")
         st.write(f"- Feature Count per Class: {model_data['model'].feature_count_.shape}")
+
+# ==================== HALAMAN PANDUAN ====================
+def show_guide():
+    """Menampilkan halaman panduan"""
+    st.header("📘 Panduan Penggunaan Sistem")
+    
+    st.markdown("""
+    ## 🎯 **Tujuan Sistem**
+    Sistem ini dirancang untuk mengklasifikasikan jenis perkara kriminal berdasarkan deskripsi singkat kejadian menggunakan metode **Naive Bayes** dan **TF-IDF** dengan preprocessing **Sastrawi** untuk Bahasa Indonesia.
+    
+    ## 📋 **Menu Navigasi**
+    
+    ### 1. 📊 **Dashboard**
+    - Menampilkan statistik dan visualisasi data kasus kriminal
+    - Distribusi jenis perkara
+    - Lokasi kejadian paling banyak
+    
+    ### 2. 🔮 **Prediksi Kasus**
+    - Masukkan deskripsi kasus kriminal
+- Lihat hasil klasifikasi dengan tingkat keyakinan
+- Analisis kata kunci yang mempengaruhi prediksi
+- Riwayat prediksi sebelumnya
+    
+    ### 3. 📚 **Data & Preprocessing**
+    - Lihat data asli dan hasil preprocessing
+    - Demo proses preprocessing teks
+    - Statistik sebelum dan sesudah preprocessing
+    
+    ### 4. 📈 **Analisis Model**
+    - Evaluasi performa model (akurasi, confusion matrix)
+    - Analisis fitur penting (TF-IDF)
+    - Informasi teknis model
+    
+    ## 🔧 **Cara Menggunakan**
+    
+    ### **Langkah 1: Install Dependencies**
+    Pastikan semua package terinstal dengan menekan tombol **"Install Packages"** di sidebar jika ada package yang belum terinstal.
+    
+    ### **Langkah 2: Upload Data (Opsional)**
+    - Upload file Excel Anda melalui sidebar
+    - File harus memiliki kolom: **'URAIAN SINGKAT (MO)'** dan **'PERKARA'**
+    - Jika tidak upload, sistem akan menggunakan data contoh
+    
+    ### **Langkah 3: Konfigurasi**
+    - Pilih apakah ingin menggunakan **Sastrawi** untuk preprocessing
+    - Sastrawi akan melakukan **stemming** dan **stopword removal** Bahasa Indonesia
+    
+    ### **Langkah 4: Prediksi Kasus**
+    1. Pilih menu **"Prediksi Kasus"**
+    2. Masukkan deskripsi kasus atau pilih contoh
+    3. Klik **"Analisis Kasus"**
+    4. Lihat hasil klasifikasi dan analisis
+    
+    ## 📊 **Metodologi CRISP-DM**
+    
+    Sistem ini mengimplementasikan metodologi **CRISP-DM** (Cross Industry Standard Process for Data Mining):
+    
+    1. **Business Understanding**: Memahami kebutuhan klasifikasi kasus kriminal
+    2. **Data Understanding**: Eksplorasi dan analisis data kasus
+    3. **Data Preparation**: Preprocessing teks dengan Sastrawi
+    4. **Modeling**: Implementasi Naive Bayes dengan TF-IDF
+    5. **Evaluation**: Evaluasi model dengan cross-validation
+    6. **Deployment**: Sistem web interaktif dengan Streamlit
+    
+    ## 🔍 **Algoritma yang Digunakan**
+    
+    ### **1. TF-IDF (Term Frequency-Inverse Document Frequency)**
+    - Mengubah teks menjadi vektor numerik
+    - Memberi bobot pada kata berdasarkan frekuensi dan kelangkaan
+    
+    ### **2. Naive Bayes Multinomial**
+    - Algoritma klasifikasi probabilistik
+    - Cocok untuk data teks dengan banyak fitur
+    - Efisien untuk dataset kecil hingga menengah
+    
+    ### **3. Sastrawi untuk Preprocessing**
+    - **Stemming**: Mengubah kata ke bentuk dasar
+    - **Stopword Removal**: Menghapus kata umum yang tidak informatif
+    
+    ## 💡 **Tips untuk Hasil Terbaik**
+    
+    1. **Deskripsi yang Jelas**: Tulis deskripsi kasus dengan detail yang cukup
+    2. **Bahasa Indonesia Formal**: Gunakan bahasa Indonesia yang baik dan benar
+    3. **Fokus pada Fakta**: Deskripsikan kejadian tanpa opini atau emosi
+    4. **Konsistensi**: Gunakan istilah yang konsisten dalam deskripsi
+    
+    ## 🛠️ **Troubleshooting**
+    
+    ### **Problem: Package tidak terinstal**
+    **Solution**: Klik tombol "Install Packages" di sidebar
+    
+    ### **Problem: File Excel tidak terbaca**
+    **Solution**: 
+    - Pastikan format file .xlsx atau .xls
+    - Pastikan kolom yang diperlukan ada
+    - Coba gunakan data contoh terlebih dahulu
+    
+    ### **Problem: Prediksi tidak akurat**
+    **Solution**:
+    - Tambah data training
+    - Gunakan deskripsi yang lebih detail
+    - Coba dengan dan tanpa Sastrawi
+    
+    ## 📞 **Dukungan**
+    
+    Sistem ini dikembangkan untuk penelitian **Klasifikasi Kasus Kriminal**.
+    Untuk pertanyaan atau masalah, silakan hubungi developer.
+    """)
 
 # ==================== RUN APLIKASI ====================
 if __name__ == "__main__":
